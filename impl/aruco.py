@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import torch
 from random import random, randint
 
 MIP36h12 = [0xd2b63a09d, 0x6001134e5, 0x1206fbe72, 0xff8ad6cb4, 0x85da9bc49, 0xb461afe9c,
@@ -75,23 +76,42 @@ def get_marker(id, size = 512, border_width = 1.0):
 
     return canvas, corners
 
-ids_as_bits = [id_to_bits(i) for i in range(250)]
-def find_id(bits):
+ids_as_bits = np.array([id_to_bits(i) for i in range(250)]).reshape(-1, 6, 6)
 
-    rot0 = bits.flatten()
-    rot90 = np.rot90(bits, 1).flatten()
-    rot180 = np.rot90(bits, 2).flatten()
-    rot270 = np.rot90(bits, 3).flatten()
+# def find_id(bits: np.ndarray, ids_as_bits: np.ndarray) -> tuple[int, int]:
 
-    distances = [int(np.min([np.sum(np.abs(rot0 - check_bits)),
-                np.sum(np.abs(rot90 - check_bits)),
-                np.sum(np.abs(rot180 - check_bits)),
-                np.sum(np.abs(rot270 - check_bits))])) 
-                for check_bits in ids_as_bits]
+#     rot0 = bits.flatten()
+#     rot90 = np.rot90(bits, 1).flatten()
+#     rot180 = np.rot90(bits, 2).flatten()
+#     rot270 = np.rot90(bits, 3).flatten()
+
+    # distances = [int(np.min([np.sum(np.abs(rot0 - check_bits)),
+    #             np.sum(np.abs(rot90 - check_bits)),
+    #             np.sum(np.abs(rot180 - check_bits)),
+    #             np.sum(np.abs(rot270 - check_bits))])) 
+    #             for check_bits in ids_as_bits]
     
-    id = int(np.argmin(distances))
+#     id = int(np.argmin(distances))
 
-    return (id, distances[id])
+#     return (id, distances[id])
+
+@torch.no_grad()
+def find_id_opt(ids_as_bits, bits):
+
+    bits = bits.squeeze()
+    
+    n_patches = bits.shape[0]
+    rotated_candidate_bits = torch.stack([torch.rot90(bits, ii, dims=(1,2)) 
+                                            for ii in range(4)], dim=1)
+    
+    dists = ids_as_bits[None,None,:,:,:] - rotated_candidate_bits[:,:,None,:,:]
+    dists = torch.abs(dists).sum(dim=(3,4)) # n_patch x 4 x 250
+    dists = dists.view(n_patches, -1)
+    min_flat_indices = torch.argmin(dists, dim=1)
+    min_id = min_flat_indices % 250
+    min_dist = torch.min(dists, dim=1)[0]
+
+    return min_id.cpu(), min_dist.cpu()
 
 if __name__ == '__main__':
     marker, corners = get_marker(randint(0, 250), border_width = random())

@@ -8,6 +8,7 @@ import time
 import glob
 import os
 import tqdm
+import torch
 
 from deeparuco_processor import DeepArucoProcessor, render_results
 
@@ -27,14 +28,21 @@ def project_corners(corners, source_boxes):
     return corners
 
 
-def main(data_dir: str, detector_path: str, regressor_path: str, render: bool, decoder_path="models/dec_new.h5"):
+def main(data_dir: str, detector_path: str, regressor_path: str, render: bool, profile: bool, decoder_path="models/dec_new.h5"):
 
     detector = YOLO(detector_path)
+    if torch.cuda.is_available():
+        detector = detector.to('cuda')
+        # detector.model = torch.compile(detector.model)
+        # detector = detector.to('cuda')
     regressor = load_model(regressor_path, custom_objects={"weighted_loss": weighted_loss},
     )
     decoder = load_model(decoder_path)
 
     pipe = DeepArucoProcessor(detector, regressor, decoder)
+    if torch.cuda.is_available():
+        pipe.ids_as_bits = pipe.ids_as_bits.to('cuda')
+    pipe.profile_timing(profile)
 
     image_paths = glob.glob(os.path.join(data_dir, "*.png"))
     print(f"processing {len(image_paths)} files!")
@@ -76,6 +84,7 @@ if __name__ == "__main__":
     parser.add_argument("--detector", type=str, help="marker detector to use", default="models/det_luma_bc_s.pt")
     parser.add_argument("--regressor", type=str, help="corner refinement model to use", default="models/reg_hmap_8.h5")
     parser.add_argument('--render', action='store_true', help='To render.')
+    parser.add_argument('--profile', action='store_true', help='To get internal timings.')
     args = parser.parse_args()
 
-    main(args.data, args.detector, args.regressor, args.render)
+    main(args.data, args.detector, args.regressor, args.render, args.profile)

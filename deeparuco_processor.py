@@ -1,11 +1,16 @@
 import cv2
 import numpy as np
+import time
 import tensorflow as tf
-from impl.aruco import find_id
+from impl.aruco import ids_as_bits, find_id_opt
 from impl.heatmaps import pos_from_heatmap
 from impl.losses import weighted_loss
 from impl.utils import marker_from_corners, ordered_corners
 
+import tensorflow as tf
+import torch
+# tf.debugging.set_log_device_placement(True)
+print(f"{torch.cuda.is_available()=}")
 class DeepArucoProcessor:
 
     def __init__(self, detector, regressor, decoder):
@@ -13,6 +18,11 @@ class DeepArucoProcessor:
         self.regressor = regressor
         self.decoder = decoder
         self.norm = lambda x: (x - np.min(x)) / (np.max(x) - np.min(x) + 1e-9)
+        self.ids_as_bits = torch.tensor(ids_as_bits)
+        self.profiling = False
+
+    def profile_timing(self, active: bool):
+        self.profiling = active
 
     @tf.function(reduce_retracing=True)
     def refine_corners(self, crops):
@@ -29,6 +39,9 @@ class DeepArucoProcessor:
                    'corners': None,
                    'decode_ids': None,
                    'decode_dists': None}
+
+        if self.profiling:
+            t0 = time.time()
 
         #### Detect markers
         detections = self.detector(pic, verbose=False, iou=0.5, conf=0.03)[0].cpu().boxes
@@ -53,7 +66,15 @@ class DeepArucoProcessor:
             cv2.resize(pic[det[1] : det[3], det[0] : det[2]], (64, 64)) for det in xyxy
         ]
         crops = [self.norm(crop) for crop in crops_ori]
+
+        if self.profiling:
+            print(f" BBOXDETECTION :: {1000 * (time.time() - t0):.2f} ms")    
+
+        if self.profiling:
+            t0 = time.time()
+
         corners = self.refine_corners(np.array(crops)).numpy()
+
         area = 75  # <- Expected area of the blobs to detect
         kp_params = cv2.SimpleBlobDetector_Params()
         if area > 0:
@@ -81,14 +102,33 @@ class DeepArucoProcessor:
         results['filtered_boxes'] = np.array(xyxy)
         results['corners'] = np.array(corners)
 
+        if self.profiling:
+            print(f" REFINECORNERINFER :: {1000 * (time.time() - t0):.2f} ms")            
+
+        if self.profiling:
+            t0 = time.time() 
+
         #### Extract decoded ids
         markers = []
         for crop, cs in zip(crops_ori, corners):
             marker = marker_from_corners(crop, cs, 32)
             markers.append(self.norm(cv2.cvtColor(marker, cv2.COLOR_BGR2GRAY)))
         # Get ids from markers
+
+        if self.profiling:
+            print(f" DECODE (0) :: {1000 * (time.time() - t0):.2f} ms")
+
         decoder_out = np.round(self.decode_markers(np.array(markers)).numpy())
-        ids, dists = zip(*[find_id(out) for out in decoder_out])
+
+        if self.profiling:
+            print(f" DECODE (1) :: {1000 * (time.time() - t0):.2f} ms")
+
+        ids, dists = find_id_opt(self.ids_as_bits, torch.tensor(decoder_out).to(self.ids_as_bits.device))
+        # ids, dists = zip(*[find_id(out, ids_as_bits) for out in decoder_out])
+
+        if self.profiling:
+            print(f" DECODE :: {1000 * (time.time() - t0):.2f} ms")
+
         results['decode_ids'] = ids
         results['decode_dists'] = dists
 
