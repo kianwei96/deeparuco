@@ -72,7 +72,7 @@ def main(data_dir: str, detector_path: str, regressor_path: str, render: bool, d
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="DeepArUco v2 demo tool.")
-    parser.add_argument("--data", type=str, required=True, help="Path to directory of images.")
+    parser.add_argument("--data", type=str, help="Path to directory of images.", default="examples/video_1")
     parser.add_argument("--detector", type=str, help="marker detector to use", default="models/det_luma_bc_s.pt")
     parser.add_argument("--regressor", type=str, help="corner refinement model to use", default="models/reg_hmap_8.h5")
     parser.add_argument('--render', action='store_true', help='To render.')
