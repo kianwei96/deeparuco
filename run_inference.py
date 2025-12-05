@@ -9,6 +9,7 @@ import glob
 import os
 import tqdm
 import torch
+import json
 
 from deeparuco_processor import DeepArucoProcessor, render_results
 
@@ -28,7 +29,7 @@ def project_corners(corners, source_boxes):
     return corners
 
 
-def main(data_dir: str, detector_path: str, regressor_path: str, render: bool, profile: bool, decoder_path="models/dec_new.h5"):
+def main(data_dir: str, detector_path: str, regressor_path: str, render: bool, profile: bool, log: bool, decoder_path="models/dec_new.h5"):
 
     detector = YOLO(detector_path)
     if torch.cuda.is_available():
@@ -48,6 +49,8 @@ def main(data_dir: str, detector_path: str, regressor_path: str, render: bool, p
     print(f"processing {len(image_paths)} files!")
 
     timings = []
+    if log:
+        logging_dict = {}
 
     for iidx in tqdm.tqdm(range(len(image_paths))):
         
@@ -62,9 +65,16 @@ def main(data_dir: str, detector_path: str, regressor_path: str, render: bool, p
         marker_ids = np.array(results['decode_ids'])
         marker_dists = np.array(results['decode_dists'])
 
-        img = render_results(img, boxes=boxes, corners=ext_corners, marker_ids=marker_ids)   
+        if log:
+            logging_dict[image_paths[iidx]] = {'detected_boxes': boxes.tolist(),
+                                               'filtered_boxes': results['filtered_boxes'].tolist(),
+                                               'corners': ext_corners.tolist(),
+                                               'marker_ids': marker_ids.tolist(),
+                                               'marker_dists': marker_dists.tolist(),
+                                               'timing': timings[-1]}
 
         if render:                   
+            img = render_results(img, boxes=boxes, corners=ext_corners, marker_ids=marker_ids)   
             cv2.imshow('results', img)
             cv2.setWindowTitle('results', f"results_{iidx}")
             k = cv2.waitKey(1)
@@ -73,6 +83,12 @@ def main(data_dir: str, detector_path: str, regressor_path: str, render: bool, p
 
     if render:
         cv2.destroyAllWindows()
+
+    if log:
+        os.makedirs('results', exist_ok=True)
+        folder_name = os.path.basename(data_dir)
+        with open(os.path.join('results', f"{folder_name}_deeparuco.json"), 'w') as f:
+            json.dump(logging_dict, f)
     
     print(f"{len(timings)} files processed!")
     print(f"mean: {1000*np.mean(timings[10:]):.2f} ms, std: {1000*np.std(timings[10:]):.2f} ms")
@@ -85,6 +101,7 @@ if __name__ == "__main__":
     parser.add_argument("--regressor", type=str, help="corner refinement model to use", default="models/reg_hmap_8.h5")
     parser.add_argument('--render', action='store_true', help='To render.')
     parser.add_argument('--profile', action='store_true', help='To get internal timings.')
+    parser.add_argument('--log', action='store_true', help='Log detection results to disk (.json).')
     args = parser.parse_args()
 
-    main(args.data, args.detector, args.regressor, args.render, args.profile)
+    main(args.data, args.detector, args.regressor, args.render, args.profile, args.log)
